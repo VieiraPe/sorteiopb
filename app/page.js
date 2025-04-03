@@ -2,6 +2,7 @@ import Link from "next/link";
 import Navbar from "./ui/navbar/page.jsx";
 import Main from "../app/ui/main/page.js";
 import SectionDetalhes from "./ui/section-detalhes/page.js";
+require("dotenv").config();
 
 export default function Home() {
   return (

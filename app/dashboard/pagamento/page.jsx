@@ -1,120 +1,169 @@
 "use client";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { NUMBERS_DATA } from "../../../lib/constants";
 
 export default function PagamentoPage() {
   const router = useRouter();
   const [cart, setCart] = useState([]);
   const [paymentMethod, setPaymentMethod] = useState("pix");
+  const [isClient, setIsClient] = useState(false);
 
+  // 1. Garantir que estamos no client-side
   useEffect(() => {
-    // Recuperar do localStorage ou contexto
-    const savedCart = JSON.parse(localStorage.getItem("rifa-cart")) || [];
-    setCart(savedCart);
+    setIsClient(true);
+    syncCart();
+
+    // 2. Listener para mudanças no mesmo navegador
+    const handleCartChange = () => syncCart();
+    window.addEventListener("rifa-cart-updated", handleCartChange);
+
+    // 3. Listener para mudanças em outras abas
+    const handleStorageChange = (e) => {
+      if (e.key === "rifa-cart") syncCart();
+    };
+    window.addEventListener("storage", handleStorageChange);
+
+    return () => {
+      window.removeEventListener("rifa-cart-updated", handleCartChange);
+      window.removeEventListener("storage", handleStorageChange);
+    };
   }, []);
 
-  const handlePayment = async () => {
-    try {
-      // Simular chamada à API
-      const response = await fetch("/api/payment", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          numbers: cart.map((item) => item.id),
-          paymentMethod,
-        }),
-      });
-
-      if (response.ok) {
-        // Atualizar status dos números
-        const updatedNumbers = NUMBERS_DATA.map((num) =>
-          cart.some((item) => item.id === num.id)
-            ? { ...num, paymentStatus: "paid", available: false }
-            : num
-        );
-
-        // Salvar no "banco de dados" (na prática, seria sua API)
-        localStorage.setItem("rifa-numbers", JSON.stringify(updatedNumbers));
-
-        // Limpar carrinho
-        localStorage.removeItem("rifa-cart");
-
-        router.push("/dashboard/bilhetes?payment=success");
+  // 4. Função de sincronização robusta
+  const syncCart = () => {
+    if (typeof window !== "undefined") {
+      try {
+        const savedCart = JSON.parse(localStorage.getItem("rifa-cart")) || [];
+        setCart(savedCart);
+      } catch (error) {
+        console.error("Erro ao ler carrinho:", error);
+        setCart([]);
       }
-    } catch (error) {
-      console.error("Erro no pagamento:", error);
     }
   };
 
-  const total = cart.reduce((sum, item) => sum + item.price, 0);
-  const discount = paymentMethod === "pix" ? total * 0.01 : 0;
-  const finalTotal = total - discount;
+  // 5. Atualizar totais de forma segura
+  const getTotals = () => {
+    const total = cart.reduce(
+      (sum, item) => sum + (Number(item?.price) || 0),
+      0
+    );
+    const discount = paymentMethod === "pix" ? total * 0.01 : 0;
+    return {
+      total,
+      discount,
+      finalTotal: total - discount,
+    };
+  };
+
+  const { total, discount, finalTotal } = getTotals();
+
+  // 6. Função de pagamento com sincronização
+  const handlePayment = async () => {
+    if (!cart.length) return;
+
+    try {
+      // Simular API
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+
+      // Atualizar estado global
+      const updatedNumbers = JSON.parse(
+        localStorage.getItem("rifa-numbers") || "[]"
+      );
+      const newNumbers = updatedNumbers.map((num) =>
+        cart.some((item) => item.id === num.id)
+          ? { ...num, status: "pago" }
+          : num
+      );
+
+      localStorage.setItem("rifa-numbers", JSON.stringify(newNumbers));
+      localStorage.removeItem("rifa-cart");
+
+      // Disparar eventos de atualização
+      window.dispatchEvent(new Event("storage"));
+      window.dispatchEvent(new Event("rifa-cart-updated"));
+
+      router.push("/dashboard/bilhetes?success=true");
+    } catch (error) {
+      console.error("Pagamento falhou:", error);
+    }
+  };
+
+  // 7. Renderização condicional segura
+  if (!isClient) return null;
 
   return (
-    <>
-      <h1 className="text-3xl md:text-4xl font-bold mb-8">Finalizar Compra</h1>
+    <div className="container mx-auto p-4">
+      <h1 className="text-3xl font-bold mb-6">Finalizar Compra</h1>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-2">
-          {/* Forma de pagamento */}
-          <div className="bg-white/10 backdrop-blur-sm rounded-xl p-6 border border-white/20 mb-6">
-            <h2 className="text-xl font-semibold mb-4">Método de Pagamento</h2>
-            {/* Opções de pagamento... */}
-          </div>
-
-          {/* Números selecionados */}
-          <div className="bg-white/10 backdrop-blur-sm rounded-xl p-6 border border-white/20">
-            <h2 className="text-xl font-semibold mb-4">Seus Números</h2>
-            <div className="grid grid-cols-4 gap-2">
-              {cart.map((num) => (
-                <div
-                  key={num.id}
-                  className="bg-purple-600/80 text-white text-center py-1 px-2 rounded"
-                >
-                  {num.id}
-                </div>
-              ))}
+      {cart.length === 0 ? (
+        <div className="text-center py-12">
+          <p className="text-xl mb-4">Nenhum número selecionado</p>
+          <button
+            onClick={() => router.push("/dashboard")}
+            className="bg-purple-600 text-white px-6 py-2 rounded-lg"
+          >
+            Voltar para seleção
+          </button>
+        </div>
+      ) : (
+        <div className="grid md:grid-cols-3 gap-6">
+          <div className="md:col-span-2 space-y-4">
+            {/* Seção de números selecionados */}
+            <div className="bg-gray-800 p-6 rounded-lg">
+              <h2 className="text-xl font-semibold mb-4">Seus Números</h2>
+              <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
+                {cart.map((num) => (
+                  <div
+                    key={num.id}
+                    className="bg-purple-600 text-center py-2 rounded"
+                  >
+                    <p className="font-bold">{num.id}</p>
+                    <p className="text-sm">R$ {num.price.toFixed(2)}</p>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
-        </div>
 
-        <div className="lg:col-span-1">
-          <div className="bg-white/10 backdrop-blur-sm rounded-xl p-6 border border-white/20 sticky top-4">
-            <h2 className="text-xl font-semibold mb-4">Resumo</h2>
+          <div className="md:col-span-1">
+            {/* Resumo do pedido */}
+            <div className="bg-gray-800 p-6 rounded-lg sticky top-4">
+              <h2 className="text-xl font-semibold mb-4">Resumo</h2>
 
-            <div className="space-y-3 mb-6">
-              <div className="flex justify-between">
-                <span>{cart.length} números</span>
-                <span>R$ {total.toFixed(2)}</span>
-              </div>
-
-              {paymentMethod === "pix" && (
+              <div className="space-y-3 mb-6">
                 <div className="flex justify-between">
-                  <span>Desconto PIX (1%)</span>
-                  <span className="text-green-400">
-                    -R$ {discount.toFixed(2)}
+                  <span>
+                    {cart.length} número{cart.length !== 1 ? "s" : ""}
                   </span>
+                  <span>R$ {total.toFixed(2)}</span>
                 </div>
-              )}
 
-              <div className="border-t border-white/20 pt-2 flex justify-between font-bold">
-                <span>Total</span>
-                <span>R$ {finalTotal.toFixed(2)}</span>
+                {paymentMethod === "pix" && (
+                  <div className="flex justify-between">
+                    <span>Desconto PIX</span>
+                    <span className="text-green-400">
+                      -R$ {discount.toFixed(2)}
+                    </span>
+                  </div>
+                )}
+
+                <div className="border-t border-gray-700 pt-3 flex justify-between font-bold">
+                  <span>Total</span>
+                  <span>R$ {finalTotal.toFixed(2)}</span>
+                </div>
               </div>
-            </div>
 
-            <button
-              onClick={handlePayment}
-              className="w-full bg-purple-600 hover:bg-purple-700 text-white py-3 px-4 rounded-lg font-medium transition-all"
-            >
-              Confirmar Pagamento
-            </button>
+              <button
+                onClick={handlePayment}
+                className="w-full bg-purple-600 hover:bg-purple-700 py-3 rounded-lg font-medium transition"
+              >
+                Confirmar Pagamento
+              </button>
+            </div>
           </div>
         </div>
-      </div>
-    </>
+      )}
+    </div>
   );
 }
